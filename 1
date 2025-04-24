@@ -1,0 +1,168 @@
+// Aplikacja do notatek z funkcją rozpoznawania mowy i przypomnień z kalendarzem i edycją
+import React, { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Calendar } from "@/components/ui/calendar";
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const recognition = SpeechRecognition ? new SpeechRecognition() : null;
+
+function parseReminder(note) {
+  const regex = /przypomnij mi o (.*?) (?:dnia (\d{4}-\d{2}-\d{2}) )?o (\d{1,2}:\d{2})/i;
+  const match = note.match(regex);
+  if (match) {
+    const task = match[1];
+    const dateStr = match[2];
+    const [hours, minutes] = match[3].split(":").map(Number);
+    const reminderTime = dateStr ? new Date(dateStr) : new Date();
+    reminderTime.setHours(hours, minutes, 0, 0);
+    const now = new Date();
+    if (!dateStr && reminderTime < now) {
+      reminderTime.setDate(reminderTime.getDate() + 1);
+    }
+    return { task, time: reminderTime };
+  }
+  return null;
+}
+
+function showNotification(task) {
+  if (Notification.permission === "granted") {
+    new Notification("⏰ Przypomnienie", {
+      body: task,
+    });
+  }
+}
+
+export default function VoiceNoteApp() {
+  const [isListening, setIsListening] = useState(false);
+  const [note, setNote] = useState("");
+  const [notes, setNotes] = useState([]);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [editIndex, setEditIndex] = useState(null);
+  const [editText, setEditText] = useState("");
+
+  useEffect(() => {
+    if (!recognition) return;
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "pl-PL";
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setNote(transcript);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    Notification.requestPermission();
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = new Date();
+      setNotes((prevNotes) =>
+        prevNotes.map((n) => {
+          if (n.reminder && !n.reminded && now >= n.reminder.time) {
+            alert(`⏰ Przypomnienie: ${n.reminder.task}`);
+            showNotification(n.reminder.task);
+            return { ...n, reminded: true };
+          }
+          return n;
+        })
+      );
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const startListening = () => {
+    if (recognition) {
+      setNote("");
+      setIsListening(true);
+      recognition.start();
+    }
+  };
+
+  const saveNote = () => {
+    if (note.trim()) {
+      const reminder = parseReminder(note);
+      const newNote = {
+        text: note,
+        time: new Date(),
+        reminder,
+        reminded: false,
+      };
+      setNotes([...notes, newNote]);
+      setNote("");
+    }
+  };
+
+  const updateNote = (index) => {
+    const updatedNotes = [...notes];
+    updatedNotes[index].text = editText;
+    updatedNotes[index].reminder = parseReminder(editText);
+    setNotes(updatedNotes);
+    setEditIndex(null);
+    setEditText("");
+  };
+
+  return (
+    <div className="p-4 max-w-xl mx-auto">
+      <h1 className="text-2xl font-bold mb-4">🗣️ Notatki głosowe z przypomnieniem</h1>
+      <div className="mb-4">
+        <Button onClick={startListening} disabled={isListening}>
+          {isListening ? "Słucham..." : "Nagraj notatkę"}
+        </Button>
+        {note && (
+          <div className="mt-2">
+            <p className="text-lg">📝 {note}</p>
+            <Button onClick={saveNote} className="mt-2">Zapisz notatkę</Button>
+          </div>
+        )}
+      </div>
+
+      <div className="mb-4">
+        <h2 className="text-xl font-semibold mb-2">📅 Kalendarz</h2>
+        <Calendar mode="single" selected={selectedDate} onSelect={setSelectedDate} className="rounded-md border" />
+      </div>
+
+      <div>
+        {notes.map((n, index) => (
+          <Card key={index} className="mb-2">
+            <CardContent>
+              {editIndex === index ? (
+                <div>
+                  <textarea
+                    className="w-full p-2 border rounded"
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                  />
+                  <Button onClick={() => updateNote(index)} className="mt-2">Zapisz zmiany</Button>
+                </div>
+              ) : (
+                <>
+                  <p>{n.text}</p>
+                  <p className="text-xs text-gray-500">
+                    {n.time.toLocaleString()}
+                  </p>
+                  {n.reminder && (
+                    <p className="text-xs text-blue-500">
+                      ⏰ Przypomnienie: {n.reminder.task} o {n.reminder.time.toLocaleString()}
+                    </p>
+                  )}
+                  <Button onClick={() => {
+                    setEditIndex(index);
+                    setEditText(n.text);
+                  }} className="mt-2">Edytuj</Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
